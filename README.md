@@ -10,6 +10,6 @@ The code is extremely simple. All it does is:
 NOTE: Since YouTube increased their security, there are some prereqesites to this code. As I run this on my own server and not a residential IP, I made changes to the script. It expect
 
 1. A VPN proxy
-2. A Individous instance self hosted
+2. A Individous instance
 3. A PO Token generator
 4. Cookie exported off YouTube
