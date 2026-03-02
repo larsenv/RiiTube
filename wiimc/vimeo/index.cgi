@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 from cgi import FieldStorage
+import os
 import vimeo
+
+os.environ['HTTP_PROXY'] = "http://localhost:8888"
+os.environ['HTTPS_PROXY'] = "http://localhost:8888"
 
 v = vimeo.VimeoClient(
     token="b0acb6b53986ddef2c2cb4417c627bce",
@@ -14,13 +18,12 @@ api = v.get('/videos', params={"query": form["q"].value, "per_page": 50}).json()
 
 print("Content-Type: text/plain;charset=UTF-8;\n");
 
-print("[Playlist]")
+print("#EXTM3U")
 
 i = 1
 
 for entry in api:
-    print("File" + str(i) + "=" + "http://riitube.rc24.xyz/video/wii/?q=" + entry["link"].replace("https://vimeo.com/", "") + "&site=vimeo")
-    print("Title" + str(i) + "=" + entry["name"])
-    print("Length" + str(i) + "=" + str(entry["duration"]))
+    print("#EXTINF:-1," + entry["name"])
+    print("http://riitube.rc24.xyz/video/wii/?site=vimeo&q=" + entry["link"].replace("https://vimeo.com/", ""))
 
     i += 1
