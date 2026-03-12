@@ -1,6 +1,34 @@
 #!/usr/bin/env python3
 from cgi import FieldStorage
 import dailymotion
+import threading
+
+
+def _load_env(path="/opt/.env"):
+    env = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    env[key.strip()] = val.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return env
+
+
+def _init_sentry():
+    dsn = _load_env().get("SENTRY_DSN")
+    if dsn:
+        try:
+            import sentry_sdk
+            sentry_sdk.init(dsn=dsn, traces_sample_rate=0)
+        except Exception:
+            pass
+
+
+threading.Thread(target=_init_sentry, daemon=True).start()
 
 form = FieldStorage()
 
