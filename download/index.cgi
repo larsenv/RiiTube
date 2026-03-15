@@ -106,14 +106,57 @@ else:
     elif not _is_youtube_url(video_url):
         send_html(error="Only YouTube URLs are supported.")
     else:
+        _YT_DLP = "/usr/local/bin/yt-dlp"
+        _YT_DLP_ARGS = [
+            "--remote-components", "ejs:github",
+            "--proxy", "http://localhost:8888/",
+            "--cookies", "/opt/`.txt",
+            "--extractor-args", "youtube:pot_provider=http://127.0.0.1:4416/v1/token",
+        ]
+
+        # Fetch title + extension from yt-dlp metadata (no download)
+        try:
+            raw_name = subprocess.check_output(
+                [_YT_DLP] + _YT_DLP_ARGS + ["--print", "%(title)s.%(ext)s", video_url],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:
+            raw_name = ""
+
+        # Sanitise: strip chars that break headers or filesystems
+        safe_name = "".join(
+            c for c in raw_name if c not in r'\/:*?"<>|'
+        ).strip()
+        if not safe_name or "." not in safe_name:
+            safe_name = "video.mp4"
+
+        # RFC 5987 encoded filename for non-ASCII titles
+        encoded_name = urllib.parse.quote(safe_name)
+        ascii_name = safe_name.encode("ascii", "replace").decode().replace('"', "")
+
         stdout.buffer.write(b"Content-Type: application/octet-stream\n")
-        stdout.buffer.write(
-            b'Content-Disposition: attachment; filename="video"\n\n'
-        )
+        stdout.buffer.write((
+            'Content-Disposition: attachment; filename="' + ascii_name + '"; '
+            "filename*=UTF-8''" + encoded_name + "\n\n"
+        ).encode("utf-8"))
         stdout.flush()
 
-        proc = subprocess.Popen(["/usr/local/bin/yt-dlp", "--remote-components", "ejs:github", "--proxy", "http://localhost:8888/", "--cookies", "/opt/`.txt", "--extractor-args", "youtube:pot_provider=http://127.0.0.1:4416/v1/token", video_url, "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(
+            [_YT_DLP] + _YT_DLP_ARGS + [video_url, "-o", "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
-        for chunk in iter(proc.stdout):
-            stdout.flush()
-            stdout.buffer.write(chunk)
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                stdout.buffer.write(chunk)
+                stdout.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            proc.terminate()
+            proc.wait()
