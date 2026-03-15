@@ -118,17 +118,6 @@ else:
 
         proc = subprocess.Popen(["/usr/local/bin/yt-dlp", "--remote-components", "ejs:github", "--proxy", "http://localhost:8888/", "--cookies", "/opt/`.txt", "--extractor-args", "youtube:pot_provider=http://127.0.0.1:4416/v1/token", video_url, "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        try:
-            while True:
-                chunk = proc.stdout.read(65536)
-                if not chunk:
-                    break
-                stdout.buffer.write(chunk)
-                stdout.flush()
-        except (BrokenPipeError, OSError):
-            pass
-        finally:
-            if proc.poll() is None:
-                proc.terminate()
-            proc.stdout.close()
-            proc.wait()
+        for chunk in iter(proc.stdout):
+            stdout.flush()
+            stdout.buffer.write(chunk)
