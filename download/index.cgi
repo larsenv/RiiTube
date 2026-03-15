@@ -114,15 +114,17 @@ else:
             "--extractor-args", "youtube:pot_provider=http://127.0.0.1:4416/v1/token",
         ]
 
-        # Fetch title + extension from yt-dlp metadata (no download)
-        try:
-            raw_name = subprocess.check_output(
-                [_YT_DLP] + _YT_DLP_ARGS + ["--print", "%(title)s.%(ext)s", video_url],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-        except Exception:
-            raw_name = ""
+        # Single yt-dlp invocation: --print emits "title.ext\n" to stdout first,
+        # then the binary video data follows immediately on the same pipe.
+        # This avoids a separate metadata round-trip and starts the download right away.
+        proc = subprocess.Popen(
+            [_YT_DLP] + _YT_DLP_ARGS + ["--print", "%(title)s.%(ext)s", video_url, "-o", "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Read the filename line (--print emits "title.ext\n" before binary data)
+        raw_name = proc.stdout.readline().decode("utf-8", errors="replace").strip()
 
         # Sanitise: strip chars that break headers or filesystems
         safe_name = "".join(
@@ -141,12 +143,6 @@ else:
             "filename*=UTF-8''" + encoded_name + "\n\n"
         ).encode("utf-8"))
         stdout.flush()
-
-        proc = subprocess.Popen(
-            [_YT_DLP] + _YT_DLP_ARGS + [video_url, "-o", "-"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
 
         try:
             while True:
