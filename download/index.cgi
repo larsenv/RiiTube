@@ -26,18 +26,14 @@ def load_env(path="/opt/.env"):
 env = load_env()
 
 
-def init_sentry():
-    sentry_dsn = env.get("SENTRY_DSN")
-    if sentry_dsn:
-        try:
-            import sentry_sdk
+sentry_dsn = env.get("SENTRY_DSN")
+if sentry_dsn:
+    try:
+        import sentry_sdk
 
-            sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=0)
-        except Exception:
-            pass
-
-
-threading.Thread(target=init_sentry, daemon=True).start()
+        sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=0)
+    except Exception:
+        pass
 
 PASSWORD = env.get("DOWNLOAD_PASSWORD", "")
 
