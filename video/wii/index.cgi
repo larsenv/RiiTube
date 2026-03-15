@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from cgi import FieldStorage
 from sys import stdout
+import atexit
 import io
 import requests
 import subprocess
-import threading
 import urllib.parse
 
 
@@ -22,17 +22,14 @@ def _load_env(path="/opt/.env"):
     return env
 
 
-def _init_sentry():
-    dsn = _load_env().get("SENTRY_DSN")
-    if dsn:
-        try:
-            import sentry_sdk
-            sentry_sdk.init(dsn=dsn, traces_sample_rate=0)
-        except Exception:
-            pass
-
-
-threading.Thread(target=_init_sentry, daemon=True).start()
+_sentry_dsn = _load_env().get("SENTRY_DSN")
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=_sentry_dsn, traces_sample_rate=0)
+        atexit.register(lambda: sentry_sdk.flush(timeout=2))
+    except Exception:
+        pass
 
 form = FieldStorage()
 

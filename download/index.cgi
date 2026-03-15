@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
+import atexit
 import html
 import os
 import secrets
 import subprocess
-import threading
 import urllib.parse
 from cgi import FieldStorage
 from sys import stdout
@@ -25,13 +25,13 @@ def load_env(path="/opt/.env"):
 
 env = load_env()
 
-
 sentry_dsn = env.get("SENTRY_DSN")
 if sentry_dsn:
     try:
         import sentry_sdk
 
         sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=0)
+        atexit.register(lambda: sentry_sdk.flush(timeout=2))
     except Exception:
         pass
 
