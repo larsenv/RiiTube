@@ -1,0 +1,24 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.venv
+env/
+venv/
+bin/
+lib/
+include/
+share/
+
+# Documentation and AI-generated files
+docs/
+GEMINI.md
+.gemini/
+.claude/
+ai_docs/
+plans/
