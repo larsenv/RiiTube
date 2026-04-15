@@ -32,11 +32,11 @@ if _sentry_dsn:
 form = FieldStorage()
 
 if "q" in form.keys():
-    api = requests.get("http://95.217.72.119:29864/api/v1/search?q=" + form["q"].value).json()
+    api = requests.get("http://localhost:29864/api/v1/search?q=" + form["q"].value).json()
 elif "trending" in form.keys():
-    api = requests.get("http://95.217.72.119:29864/api/v1/trending").json()
+    api = requests.get("http://localhost:29864/api/v1/trending").json()
 else:
-    api = requests.get("http://95.217.72.119:29864/api/v1/popular").json()
+    api = requests.get("http://localhost:29864/api/v1/popular").json()
 
 print("Content-Type: text/plain;charset=UTF-8;\n");
 
