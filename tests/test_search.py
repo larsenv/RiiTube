@@ -103,12 +103,52 @@ class SearchTests(unittest.TestCase):
         self.assertNotIn("\nURL=http://evil.test", output)
         self.assertEqual(self.playlist_entries(output)[0]["type"], "video")
 
+    def test_invalid_video_ids_cannot_inject_playlist_fields(self):
+        invalid_ids = [
+            None, 123, [], {}, "", "short", "012345678901", "jNQXAC9IVR/",
+            "jNQXAC9IVRé",
+            "jNQXAC9IVRw\r\ntype=playlist\r\nname=Forged\r\nURL=http://evil.test",
+        ]
+        valid_ids = [VIDEO["videoId"], "-_012345678"]
+        api_entries = [{"videoId": vid, "title": "Invalid"} for vid in invalid_ids]
+        api_entries.extend({"videoId": vid, "title": "Valid"} for vid in valid_ids)
+        for query in ("q=cats", "trending=1", ""):
+            with self.subTest(query=query):
+                output, _, _ = self.run_search(query, entries=api_entries)
+                self.assertNotIn("evil.test", output)
+                expected_urls = ["http://riitube.rc24.xyz/video/wii/?q=" + vid for vid in valid_ids]
+                if query == "q=cats":
+                    videos = [entry for entry in self.playlist_entries(output) if entry["type"] == "video"]
+                    self.assertEqual([entry["URL"] for entry in videos], expected_urls)
+                    self.assertEqual([entry["thumb"] for entry in videos], [
+                        "http://i.ytimg.com/vi/" + vid + "/mqdefault.jpg" for vid in valid_ids
+                    ])
+                else:
+                    self.assertEqual([line for line in output.splitlines() if line.startswith("http:")],
+                                     expected_urls)
+
+    def test_nonempty_page_with_only_skipped_entries_can_advance(self):
+        skipped = [None, {"type": "channel"}, {"videoId": VIDEO["videoId"]}]
+        for page in (1, 3):
+            with self.subTest(page=page):
+                output, _, _ = self.run_search(urlencode({"q": "cats", "page": page}), entries=skipped)
+                entries = self.playlist_entries(output)
+                next_page = next(entry for entry in entries if entry["name"] == f"Next page ({page + 1})")
+                self.assertEqual(next_page["type"], "playlist")
+                self.assertEqual(parse_qs(urlsplit(next_page["URL"]).query),
+                                 {"q": ["cats"], "page": [str(page + 1)]})
+                self.assertNotIn("No more results", output)
+                self.assertFalse(any(entry["type"] == "video" for entry in entries))
+
     def test_trending_and_popular_keep_their_m3u_output(self):
         for query, endpoint in (("trending=1", "trending"), ("", "popular")):
             with self.subTest(endpoint=endpoint):
                 output, _, get = self.run_search(query)
                 self.assertIn("#EXTM3U\n", output)
-                self.assertIn('#EXTINF:-1="http://i.ytimg.com/vi/jNQXAC9IVRw/mqdefault.jpg",Me at the zoo', output)
+                self.assertIn(
+                    '#EXTINF:-1="http://i.ytimg.com/vi/jNQXAC9IVRw/mqdefault.jpg",Me at the zoo\n'
+                    'http://riitube.rc24.xyz/video/wii/?q=jNQXAC9IVRw\n', output
+                )
                 self.assertNotIn("version=1", output)
                 self.assertEqual(get.call_args.args[0], "http://95.217.72.119:29864/api/v1/" + endpoint)
 

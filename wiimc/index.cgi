@@ -3,6 +3,7 @@ from sys import stdout, stderr
 from cgi import FieldStorage
 import requests
 import json
+import re
 from urllib.parse import urlencode
 
 form = FieldStorage()
@@ -63,21 +64,23 @@ if not isinstance(api, list):
     api = []
     fetch_failed = True
 
-video_count = 0
 for entry in api:
     try:
         # Check if entry is a dictionary and has required keys
         if not isinstance(entry, dict) or "videoId" not in entry or "title" not in entry:
             continue
-            
-        thumbnail = "http://i.ytimg.com/vi/" + entry["videoId"] + "/mqdefault.jpg"
-        video_url = "http://riitube.rc24.xyz/video/wii/?q=" + entry["videoId"]
+
+        video_id = entry["videoId"]
+        if not isinstance(video_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            continue
+
+        thumbnail = "http://i.ytimg.com/vi/" + video_id + "/mqdefault.jpg"
+        video_url = "http://riitube.rc24.xyz/video/wii/?q=" + video_id
         if searching:
             print_playlist_entry("video", entry["title"], video_url, thumbnail)
         else:
             print("#EXTINF:-1=" + '"' + thumbnail + '"' + "," + entry["title"])
             print(video_url)
-        video_count += 1
     except Exception as e:
         stderr.write(f"Error processing entry: {e}\n")
         continue
@@ -85,7 +88,7 @@ for entry in api:
 if searching:
     if fetch_failed:
         print_playlist_entry("playlist", "Search failed - select to retry", search_url(page))
-    elif video_count:
+    elif api:
         print_playlist_entry(
             "playlist", "Next page (" + str(page + 1) + ")", search_url(page + 1)
         )
