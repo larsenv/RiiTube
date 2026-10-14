@@ -28,7 +28,7 @@ else:
 proc = None
 try:
     if "youtube" in video_url:
-        proc = subprocess.Popen(["/usr/local/bin/yt-dlp", "--remote-components", "ejs:github", "--proxy", "http://localhost:8888/", "--cookies", "/opt/`.txt", "--extractor-args", "youtube:pot_provider=http://127.0.0.1:4416/v1/token", "-f", "[width<=641]", video_url, "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(["/usr/local/bin/yt-dlp", "--remote-components", "ejs:github", "--proxy", "http://localhost:8888/", "--cookies", "/opt/`.txt", "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416", "-f", "[width<=641]", video_url, "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     elif "vimeo" in video_url:
         proc = subprocess.Popen(["/usr/local/bin/yt-dlp", "-f", "ba+bv[width<=641]", "--cookies", "/opt/7.txt", video_url, "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     elif site == "dailymotion":
