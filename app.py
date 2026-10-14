@@ -366,7 +366,7 @@ def onlinemedia_xml():
 @app.route("/video/wii/")
 def video_wii():
     q, site = request.args.get("q", ""), request.args.get("site", "youtube")
-    url = f"https://vimeo.com/{q}" if site == "vimeo" else (f"https://www.dailymotion.com/video/{q}" if site == "dailymotion" else f"https://www.youtube.com/watch?v={q}")
+    url = f"https://player.vimeo.com/video/{q}" if site == "vimeo" else (f"https://www.dailymotion.com/video/{q}" if site == "dailymotion" else f"https://www.youtube.com/watch?v={q}")
     return Response(stream_with_context(stream_video(url)), mimetype="application/octet-stream")
 
 def _plx_entry(kind, name, url, thumb=None):
