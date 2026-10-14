@@ -1,4 +1,13 @@
-requests==2.32.5
-vimeo-python
+flask
+requests
+python-dotenv
+sentry-sdk[flask]
 dailymotion
+PyVimeo
 yt-dlp
+curl_cffi<0.15
+playwright
+waitress
+pproxy
+bgutil-ytdlp-pot-provider
+black
