@@ -87,7 +87,7 @@ try:
         proc = subprocess.Popen([
             "/usr/local/bin/yt-dlp", "--remote-components", "ejs:github",
             "--proxy", "http://localhost:8888/", "--cookies", "/opt/`.txt",
-            "--extractor-args", "youtube:pot_provider=http://127.0.0.1:4416/v1/token",
+            "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
             "-f", "[width<=641]", video_url, "-o", "-"
         ], stdout=subprocess.PIPE, stderr=stderr, start_new_session=True)
     elif "vimeo" in video_url:

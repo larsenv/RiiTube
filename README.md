@@ -17,3 +17,26 @@ NOTE: Since YouTube increased their security, there are some prereqesites to thi
 2. A Individous instance
 3. A PO Token generator
 4. Cookie exported off YouTube
+
+## YouTube runtime and token provider
+
+Install `requirements.txt` into the Python environment used by
+`/usr/local/bin/yt-dlp`. It includes the bgutil Python plugin; running the token
+server alone does not install that plugin. Run the matching bgutil HTTP server
+at `http://127.0.0.1:4416`. The CGI uses the plugin's `base_url` option, which takes
+the server base address rather than a token endpoint. See the
+[bgutil installation and verification guide](https://github.com/Brainicism/bgutil-ytdlp-pot-provider#installation).
+
+Full YouTube support also needs a
+[supported JavaScript runtime](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+Deno is enabled by default; Node needs `--js-runtimes node` in yt-dlp's
+configuration. `--remote-components ejs:github` supplies solver scripts, not the
+runtime that executes them. Ensure the CGI service can find the runtime.
+
+For public videos, account cookies are not always necessary. The proxy and
+cookie arguments in this CGI are deployment-specific settings. yt-dlp documents
+[request-rate limits and cookie requirements](https://github.com/yt-dlp/yt-dlp/wiki/Extractors),
+and bgutil notes that tokens do not guarantee avoiding bot checks or HTTP 403
+errors. Check verbose yt-dlp logs on the actual server for provider loading,
+token generation, runtime availability, and the reported error before changing
+authentication settings.
