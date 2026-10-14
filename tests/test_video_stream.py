@@ -35,13 +35,28 @@ elif mode == "small":
     sys.stdout.buffer.write(b"first")
     sys.stdout.flush()
     time.sleep(60)
-elif mode == "disconnect":
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+elif mode == "silent":
+    time.sleep(60)
+elif mode in ("disconnect", "stubborn"):
+    code = "import time; time.sleep(60)"
+    if mode == "stubborn":
+        code = (
+            "import os, signal, time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "Path(os.environ['STREAM_TEST_DIR'], 'grandchild.ready').touch(); "
+            "time.sleep(60)"
+        )
+    child = subprocess.Popen([sys.executable, "-c", code])
     (root / "grandchild.pid").write_text(str(child.pid))
+    if mode == "stubborn":
+        while not (root / "grandchild.ready").exists():
+            time.sleep(0.01)
     while True:
         sys.stdout.buffer.write(b"data" * 2048)
         sys.stdout.flush()
 else:
+    if mode == "signed":
+        sys.stderr.write("Input: https://example.test/video.mp4?token=private-token\n")
     sys.stderr.buffer.write(b"progress\n" * 131072)
     sys.stderr.flush()
     sys.stdout.buffer.write(bytes(range(256)) * 512)
@@ -106,6 +121,20 @@ class VideoStreamTests(unittest.TestCase):
         self.processes.append(process)
         return process
 
+    def read_until(self, process, marker):
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            output = b""
+            deadline = time.monotonic() + 5
+            while marker not in output and time.monotonic() < deadline:
+                if selector.select(timeout=0.1):
+                    chunk = os.read(process.stdout.fileno(), 8192)
+                    if not chunk:
+                        break
+                    output += chunk
+        self.assertIn(marker, output)
+        return output
+
     def test_large_diagnostics_cannot_block_the_video_pipe(self):
         for query in ("q=jNQXAC9IVRw", "site=vimeo&q=123", "site=dailymotion&q=x123"):
             with self.subTest(query=query):
@@ -113,7 +142,10 @@ class VideoStreamTests(unittest.TestCase):
                 output, errors = process.communicate(timeout=10)
                 self.assertEqual(process.returncode, 0)
                 self.assertEqual(output.split(b"\n\n", 1)[1], BODY)
-                self.assertIn(DIAGNOSTICS, errors)
+                if query.startswith("site=dailymotion"):
+                    self.assertNotIn(DIAGNOSTICS, errors)
+                else:
+                    self.assertIn(DIAGNOSTICS, errors)
                 self.assertFalse(self.alive(int((self.root / "primary.pid").read_text())))
 
     def test_empty_primary_uses_fallback_without_blocking_on_its_diagnostics(self):
@@ -133,28 +165,51 @@ class VideoStreamTests(unittest.TestCase):
 
     def test_small_first_chunk_is_forwarded_before_the_downloader_finishes(self):
         process = self.start_cgi(mode="small")
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            output = b""
-            deadline = time.monotonic() + 5
-            while b"first" not in output and time.monotonic() < deadline:
-                if selector.select(timeout=0.1):
-                    output += os.read(process.stdout.fileno(), 8192)
-        self.assertIn(b"first", output)
+        self.read_until(process, b"first")
         self.assertIsNone(process.poll())
         process.stdout.close()
-        os.kill(int((self.root / "primary.pid").read_text()), signal.SIGTERM)
-        process.wait(timeout=5)
+        process.wait(timeout=10)
 
     def test_disconnect_stops_downloader_and_its_child_without_fallback(self):
         process = self.start_cgi(mode="disconnect")
-        self.assertTrue(os.read(process.stdout.fileno(), 8192))
+        self.read_until(process, b"data")
         process.stdout.close()
         process.wait(timeout=10)
         self.assertEqual(process.returncode, 0)
         for name in ("primary.pid", "grandchild.pid"):
             self.assertFalse(self.alive(int((self.root / name).read_text())), name)
         self.assertFalse((self.root / "fallback.pid").exists())
+
+    def test_disconnect_kills_a_stubborn_child_after_the_leader_exits(self):
+        process = self.start_cgi(mode="stubborn")
+        self.read_until(process, b"data")
+        process.stdout.close()
+        process.wait(timeout=10)
+        self.assertEqual(process.returncode, 0)
+        for name in ("primary.pid", "grandchild.pid"):
+            self.assertFalse(self.alive(int((self.root / name).read_text())), name)
+        self.assertFalse((self.root / "fallback.pid").exists())
+
+    def test_disconnect_while_downloader_is_silent_stops_it_without_fallback(self):
+        process = self.start_cgi(mode="silent")
+        self.read_until(process, b"\n\n")
+        deadline = time.monotonic() + 5
+        while not (self.root / "primary.pid").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue((self.root / "primary.pid").exists())
+        process.stdout.close()
+        process.wait(timeout=10)
+        self.assertEqual(process.returncode, 0)
+        self.assertFalse(self.alive(int((self.root / "primary.pid").read_text())))
+        self.assertFalse((self.root / "fallback.pid").exists())
+
+    def test_dailymotion_signed_input_url_is_not_logged(self):
+        process = self.start_cgi(mode="signed", query="site=dailymotion&q=x123")
+        output, errors = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(output.split(b"\n\n", 1)[1], BODY)
+        self.assertFalse(b"private-token" in errors, "signed input token was logged")
+        self.assertFalse(b"https://example.test/video.mp4" in errors, "signed input URL was logged")
 
 
 if __name__ == "__main__":

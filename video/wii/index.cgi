@@ -4,13 +4,29 @@ from sys import stdout, stderr
 import subprocess
 import os
 import signal
+import select
+import time
 
 
 def copy_video(proc):
     processed = False
     completed = False
     try:
-        for chunk in iter(lambda: proc.stdout.read1(8192), b''):
+        video_fd = proc.stdout.fileno()
+        output_fd = stdout.fileno()
+        output_errors = select.POLLERR | select.POLLHUP | select.POLLNVAL
+        poller = select.poll()
+        poller.register(video_fd, select.POLLIN | select.POLLHUP | select.POLLERR)
+        poller.register(output_fd, output_errors)
+        while True:
+            events = poller.poll()
+            if any(fd == output_fd and event & output_errors for fd, event in events):
+                raise BrokenPipeError("CGI output closed")
+            if not any(fd == video_fd for fd, _ in events):
+                continue
+            chunk = os.read(video_fd, 8192)
+            if not chunk:
+                break
             stdout.buffer.write(chunk)
             stdout.flush()
             processed = True
@@ -26,10 +42,10 @@ def copy_video(proc):
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
             except ProcessLookupError:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+                proc.wait()
+            else:
+                # Keep the leader unreaped until escalation so its group ID cannot be reused.
+                time.sleep(5)
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -90,7 +106,7 @@ try:
                 "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
                 "-i", direct_url, "-bsf:a", "aac_adtstoasc", "-c", "copy",
                 "-movflags", "frag_keyframe+empty_moov", "-f", "mp4", "pipe:1"
-            ], stdout=subprocess.PIPE, stderr=stderr, start_new_session=True)
+            ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
         except subprocess.CalledProcessError as e:
             stderr.write(f"Error getting dailymotion URL: {e}\n")
 except Exception as e:
