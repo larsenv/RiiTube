@@ -1,4 +1,4 @@
-import os, subprocess, urllib.parse, threading, time, asyncio, random, sys, logging, warnings
+import os, re, signal, subprocess, urllib.parse, threading, time, asyncio, random, sys, logging, warnings
 from flask import Flask, request, Response, stream_with_context
 from dotenv import load_dotenv
 import requests, sentry_sdk, yt_dlp
@@ -21,7 +21,9 @@ load_dotenv(".env")
 COOKIE_FILE = os.getenv("COOKIE_FILE", "cookieyoutube.txt")
 COOKIE_FILE_DAILYMOTION = os.getenv("COOKIE_FILE_DAILYMOTION", "cookiedailymotion.txt")
 COOKIE_FILE_VIMEO = os.getenv("COOKIE_FILE_VIMEO", "cookievimeo.txt")
-POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://127.0.0.1:4416/")
+POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://127.0.0.1:4416").rstrip("/")  # base address of the bgutil HTTP server, not a token endpoint
+SEARCH_PAGE_SIZE = 20
+VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 PORT = int(os.getenv("PORT", 5001))
 YOUTUBE_MAX_CONCURRENT = max(1, int(os.getenv("YOUTUBE_MAX_CONCURRENT", 4)))
 YOUTUBE_MAX_RETRIES = max(1, int(os.getenv("YOUTUBE_MAX_RETRIES", 3)))
@@ -153,6 +155,7 @@ def stream_video(url):
                 cookie_file = COOKIE_FILE_DAILYMOTION
 
             cmd.extend(["--extractor-args", f"youtube:{';'.join(extractor_args)}"])
+            cmd.extend(["--extractor-args", f"youtubepot-bgutilhttp:base_url={POT_PROVIDER_URL}"])
 
             if is_dailymotion:
                 cmd.extend(["-f", "best[width<=641]/best[height<=480]/best"])
@@ -216,15 +219,9 @@ def stream_video(url):
                     target=log_stderr, args=(ffmpeg_proc, "ffmpeg"), daemon=True
                 ).start()
 
-            import signal
-
             def _kill_children(reason):
                 for child in [ffmpeg_proc, proc]:
-                    if child and child.poll() is None:
-                        try:
-                            os.killpg(os.getpgid(child.pid), signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
+                    _terminate_group(child)
                 logger.warning(f"Killed stream for {url} ({reason})")
 
             # Hard cap so a stuck/never-ending source (e.g. a live stream that
@@ -250,11 +247,7 @@ def stream_video(url):
             finally:
                 watchdog.cancel()
                 for child in [ffmpeg_proc, proc]:
-                    if child and child.poll() is None:
-                        try:
-                            os.killpg(os.getpgid(child.pid), signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
+                    _terminate_group(child)
 
             stderr_thread.join(timeout=1)
             logger.warning(f"Attempt {attempt+1} produced no data for {url}")
@@ -268,6 +261,33 @@ def stream_video(url):
     finally:
         if slot_acquired:
             _youtube_download_slots.release()
+
+def _terminate_group(child):
+    """SIGTERM a child's process group, escalate to SIGKILL, then reap it.
+
+    A disconnected Wii must not leave yt-dlp or its ffmpeg child downloading. The leader
+    stays unreaped until escalation so its group ID cannot be reused by another process.
+    """
+    if child is None:
+        return
+    if child.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(child.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    def escalate():
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            child.wait()
+    threading.Thread(target=escalate, daemon=True).start()
 
 app = Flask(__name__)
 
@@ -349,22 +369,44 @@ def video_wii():
     url = f"https://vimeo.com/{q}" if site == "vimeo" else (f"https://www.dailymotion.com/video/{q}" if site == "dailymotion" else f"https://www.youtube.com/watch?v={q}")
     return Response(stream_with_context(stream_video(url)), mimetype="application/octet-stream")
 
+def _plx_entry(kind, name, url, thumb=None):
+    lines = ["", f"type={kind}", "name=" + " ".join(str(name).splitlines()), f"URL={url}"]
+    if thumb:
+        lines.append(f"thumb={thumb}")
+    return lines
+
 @app.route("/wiimc/")
 def wiimc_youtube():
     q = request.args.get("q")
+    searching = q is not None
     trending = "trending" in request.args
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
     results = []
+    fetch_failed = False
 
-    if q: search_query = f"ytsearch20:{q}"
-    elif trending: search_query = "https://www.youtube.com/results?search_query=-dummy&sp=CAMSBAgDEAE%253D"
-    else: search_query = "https://www.youtube.com/results?search_query=-dummy&sp=CAASBAgDEAE%253D"
+    def search_url(number):
+        return f"{request.host_url}wiimc/?" + urllib.parse.urlencode({"q": q, "page": number})
+
+    if searching and q:
+        search_query = f"ytsearch{page * SEARCH_PAGE_SIZE}:{q}"
+        items = f"{(page - 1) * SEARCH_PAGE_SIZE + 1}:{page * SEARCH_PAGE_SIZE}"
+    elif trending:
+        search_query = "https://www.youtube.com/results?search_query=-dummy&sp=CAMSBAgDEAE%253D"
+        items = "1:25"
+    else:
+        search_query = "https://www.youtube.com/results?search_query=-dummy&sp=CAASBAgDEAE%253D"
+        items = "1:25"
+    searching = searching and bool(q)
 
     max_retries = 3
     for attempt in range(max_retries):
         proxy = get_proxy()
         try:
             ydl_opts = {
-                'quiet': True, 'extract_flat': True, 'playlist_items': '1:25',
+                'quiet': True, 'extract_flat': True, 'playlist_items': items,
                 'skip_download': True, 'nocheckcertificate': True, 'socket_timeout': 15,
                 'extractor_retries': 1,
             }
@@ -376,7 +418,10 @@ def wiimc_youtube():
                 os.environ.pop("HTTP_PROXY", None)
                 os.environ.pop("HTTPS_PROXY", None)
 
-            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['mweb', 'web_embedded', 'android']}}
+            ydl_opts['extractor_args'] = {
+                'youtube': {'player_client': ['mweb', 'web_embedded', 'android']},
+                'youtubepot-bgutilhttp': {'base_url': [POT_PROVIDER_URL]},
+            }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 res = ydl.extract_info(search_query, download=False)
@@ -388,16 +433,40 @@ def wiimc_youtube():
         except Exception as e:
             logger.warning(f"yt-dlp search error (attempt {attempt+1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
-                return Response(f"Search error: {str(e)}", status=500)
+                if not searching:
+                    return Response(f"Search error: {str(e)}", status=500)
+                fetch_failed = True
+                break
             time.sleep(0.5)
 
-    playlist = ["#EXTM3U"]
-    for entry in results:
-        video_id = entry.get("videoId")
-        if video_id:
+    # Only well-formed video IDs reach playback and thumbnail URLs.
+    results = [r for r in results if isinstance(r.get("videoId"), str) and VIDEO_ID_RE.fullmatch(r["videoId"])]
+
+    if not searching:
+        playlist = ["#EXTM3U"]
+        for entry in results:
+            video_id = entry["videoId"]
             playlist.append(f'#EXTINF:-1="http://i.ytimg.com/vi/{video_id}/mqdefault.jpg",{entry.get("title")}')
             playlist.append(f'{request.host_url}video/wii/?q={video_id}')
-    
+        return Response("\n".join(playlist) + "\n", mimetype="text/plain", content_type="text/plain;charset=UTF-8")
+
+    # Search results use WiiMC's PLX format so page links open as playlists.
+    # YouTube gives no total page count: a nonempty page offers the next one.
+    playlist = ["version=1", f"title=YouTube search - page {page}"]
+    if page > 1:
+        playlist += _plx_entry("playlist", f"Previous page ({page - 1})", search_url(page - 1))
+    for entry in results:
+        video_id = entry["videoId"]
+        playlist += _plx_entry("video", entry.get("title") or "Unknown Video",
+                               f"{request.host_url}video/wii/?q={video_id}",
+                               f"http://i.ytimg.com/vi/{video_id}/mqdefault.jpg")
+    if fetch_failed:
+        playlist += _plx_entry("playlist", "Search failed - select to retry", search_url(page))
+    elif results:
+        playlist += _plx_entry("playlist", f"Next page ({page + 1})", search_url(page + 1))
+    elif page > 1:
+        playlist += _plx_entry("playlist", "No more results - back to first page", search_url(1))
+    playlist += _plx_entry("search", "New search", f"{request.host_url}wiimc/?q=")
     return Response("\n".join(playlist) + "\n", mimetype="text/plain", content_type="text/plain;charset=UTF-8")
 
 def start_pot_provider():
